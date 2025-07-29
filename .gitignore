@@ -1,0 +1,14 @@
+# .gitignore
+
+# Environment variables
+.env
+
+# Python virtual environment
+venv/
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Temp files from our app
+temp_docs/
