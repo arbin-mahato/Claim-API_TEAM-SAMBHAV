@@ -48,11 +48,11 @@ You are a highly precise Q&A bot. Your only job is to answer the user's question
 ---------------------
 **Question:** {query_str}
 **Instructions:**
-1. Find the single most important and specific fact in the context to answer the question.
+1. First, determine if the question can be answered with a 'Yes' or 'No'.
 2. Formulate a single, direct sentence that answers the question, including critical numbers or conditions.
-3. **If the question is a yes/no question, begin your answer with 'Yes,' or 'No,'** followed by the explanation.
-4. Do not start your answer with introductory phrases like "According to the policy...". Get straight to the point.
-5.  Match the style of this example: "Yes, the policy covers maternity expenses, including childbirth..."
+3. If the question is a yes/no question, begin your answer with 'Yes,' or 'No,' followed by the explanation.
+4. Do not start your answer with other introductory phrases like "According to the policy...". Get straight to the point.
+5. Match the style of this example: "Yes, the policy covers maternity expenses, including childbirth..."
 **Answer (single sentence):**
 """
 # =====================================================================================
@@ -73,7 +73,7 @@ class HackRxRequest(BaseModel):
 class HackRxResponse(BaseModel):
     answers: List[str]
 
-@app.post("/api/v1/hackrx/run", response_model=HackRxResponse, tags=["Submission Endpoint"])
+@app.post("/hackrx/run", response_model=HackRxResponse, tags=["Submission Endpoint"])
 async def run_submission_endpoint(
     request: HackRxRequest, api_key: str = Security(get_api_key)
 ):

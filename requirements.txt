@@ -11,3 +11,5 @@ llama-index-vector-stores-pinecone
 pinecone-client
 llama-index-postprocessor-cohere-rerank
 gunicorn
+sentence-transformers
+torch
