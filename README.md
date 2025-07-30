@@ -1,1 +1,7 @@
-Hackrx 6.0
+---
+title: HackRx AI Query System
+emoji: 🚀
+colorFrom: blue
+colorTo: green
+sdk: docker
+---
