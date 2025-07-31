@@ -66,6 +66,17 @@ def get_api_key(api_key_header: str = Security(api_key_header)):
             return token
     raise HTTPException(status_code=403, detail="Could not validate credentials")
 
+
+def safe_delete(path: Path):
+    """Safely deletes a file or directory without crashing the server."""
+    try:
+        if path.is_file():
+            path.unlink()
+        elif path.is_dir():
+            shutil.rmtree(path)
+    except Exception as e:
+        print(f"Warning: Failed to delete {path}: {e}")
+
 class HackRxRequest(BaseModel):
     documents: str
     questions: List[str]
@@ -102,8 +113,7 @@ async def run_submission_endpoint(
                 print("Index upload complete. Waiting briefly for consistency...")
                 time.sleep(5)
             finally:
-                if temp_doc_path.parent.exists():
-                    shutil.rmtree(temp_doc_path.parent)
+                safe_delete(temp_doc_path)
 
         index = VectorStoreIndex.from_vector_store(vector_store, embed_model=embed_model)
         
