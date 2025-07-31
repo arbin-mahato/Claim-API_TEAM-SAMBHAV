@@ -8,12 +8,18 @@ WORKDIR /code
 COPY ./requirements.txt /code/requirements.txt
 RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
 
-# THE FIX: Pre-create all necessary directories with open permissions during the build
-RUN mkdir -p /code/model_cache && chmod 777 /code/model_cache
-RUN mkdir -p /code/temp_docs && chmod 777 /code/temp_docs
+# Create a non-root user for security
+RUN useradd --create-home --shell /bin/bash appuser
 
-# Copy the application code
-COPY . /code/
+# Create necessary directories AND give ownership to the new user
+RUN mkdir -p /code/model_cache && chown -R appuser:appuser /code/model_cache
+RUN mkdir -p /code/temp_docs && chown -R appuser:appuser /code/temp_docs
 
-# Run the Gunicorn server as the root user to avoid any permission issues
+# Copy the rest of the application code and give ownership
+COPY --chown=appuser:appuser . /code/
+
+# Switch to the non-root user
+USER appuser
+
+# Run the Gunicorn server
 CMD ["gunicorn", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:7860", "main:app"]
