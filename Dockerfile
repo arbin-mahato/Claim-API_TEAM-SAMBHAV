@@ -11,7 +11,10 @@ RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
 # Create a non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser
 
-# Copy the application code and give ownership to the new user
+# Create the cache directory AND give ownership to the new user
+RUN mkdir -p /code/model_cache && chown -R appuser:appuser /code/model_cache
+
+# Copy the rest of the application code and give ownership
 COPY --chown=appuser:appuser . /code/
 
 # Switch to the non-root user
