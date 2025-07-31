@@ -8,18 +8,9 @@ WORKDIR /code
 COPY ./requirements.txt /code/requirements.txt
 RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
 
-# Create a non-root user for security
-RUN useradd --create-home --shell /bin/bash appuser
+# Copy the application code
+COPY . /code/
 
-# Create necessary directories AND give ownership to the new user
-RUN mkdir -p /code/model_cache && chown -R appuser:appuser /code/model_cache
-RUN mkdir -p /code/temp_docs && chown -R appuser:appuser /code/temp_docs
-
-# Copy the rest of the application code and give ownership
-COPY --chown=appuser:appuser . /code/
-
-# Switch to the non-root user
-USER appuser
-
-# Run the Gunicorn server
+# Run the Gunicorn server as the root user.
+# This is acceptable for a short-term hackathon and solves all permission issues.
 CMD ["gunicorn", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:7860", "main:app"]
