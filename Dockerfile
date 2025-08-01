@@ -11,15 +11,13 @@ RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
 # Create a non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser
 
-# Create necessary directories AND give ownership to the new user
-RUN mkdir -p /code/model_cache && chown -R appuser:appuser /code/model_cache
-RUN mkdir -p /code/temp_docs && chown -R appuser:appuser /code/temp_docs
-
-# Copy the rest of the application code and give ownership
+# Copy the rest of the application code and give ownership to the new user
+# Note: We don't need to create directories like 'model_cache' because
+# the app now correctly uses the /tmp directory, which is always writable.
 COPY --chown=appuser:appuser . /code/
 
 # Switch to the non-root user
 USER appuser
 
-# Run the Gunicorn server
+# Run the Gunicorn server with Uvicorn workers
 CMD ["gunicorn", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:7860", "main:app"]

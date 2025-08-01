@@ -1,18 +1,26 @@
+# main.py: Final Submission - Optimized for Speed, Accuracy, and Reliability
+
 import os
-import requests
 import hashlib
 import shutil
 from pathlib import Path
 from dotenv import load_dotenv
 from typing import List
-import time
+import asyncio
+import httpx
+import aiofiles
 
 from fastapi import FastAPI, HTTPException, Security
-from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
+from fastapi.security.api_key import APIKeyHeader
 
 from pinecone import Pinecone
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, PromptTemplate, StorageContext
+from llama_index.core import (
+    VectorStoreIndex,
+    SimpleDirectoryReader,
+    PromptTemplate,
+    StorageContext,
+)
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.groq import Groq
 from llama_index.vector_stores.pinecone import PineconeVectorStore
@@ -24,20 +32,24 @@ from llama_index.postprocessor.cohere_rerank import CohereRerank
 
 load_dotenv()
 
-API_KEY = "69209b0175d58128f147b0104e0b91a4f6c9ad08d9852206d28d653c3b0b48cd"
+API_KEY = os.getenv("HACKRX_API_KEY", "69209b0175d58128f147b0104e0b91a4f6c9ad08d9852206d28d653c3b0b48cd")
 API_KEY_NAME = "Authorization"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 app = FastAPI(
     title="HackRx 6.0 Intelligent Query System",
-    description="Advanced RAG API with a persistent Pinecone DB and Cohere Re-ranker.",
+    description="Optimized RAG API with a persistent Pinecone DB and Cohere Re-ranker.",
     version="WINNER",
 )
 
 pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
 pinecone_index = pc.Index(host=os.getenv("PINECONE_INDEX_HOST"))
 
-embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2", cache_folder="./model_cache")
+# THE FIX: Use the /tmp directory, which is always writable by any user
+embed_model = HuggingFaceEmbedding(
+    model_name="sentence-transformers/all-MiniLM-L6-v2", cache_folder="/tmp/model_cache"
+)
+
 llm = Groq(model="llama3-8b-8192", api_key=os.getenv("GROQ_API_KEY"))
 
 QA_PROMPT_TEMPLATE = """
@@ -55,27 +67,17 @@ You are a highly precise Q&A bot. Your only job is to answer the user's question
 5. Match the style of this example: "Yes, the policy covers maternity expenses, including childbirth..."
 **Answer (single sentence):**
 """
+qa_prompt_object = PromptTemplate(QA_PROMPT_TEMPLATE)
+
 # =====================================================================================
 # 2. API LOGIC
 # =====================================================================================
 def get_api_key(api_key_header: str = Security(api_key_header)):
-    """Validates the bearer token."""
     if api_key_header and api_key_header.startswith("Bearer "):
         token = api_key_header.split(" ")[1]
         if token == API_KEY:
             return token
     raise HTTPException(status_code=403, detail="Could not validate credentials")
-
-
-def safe_delete(path: Path):
-    """Safely deletes a file or directory without crashing the server."""
-    try:
-        if path.is_file():
-            path.unlink()
-        elif path.is_dir():
-            shutil.rmtree(path)
-    except Exception as e:
-        print(f"Warning: Failed to delete {path}: {e}")
 
 class HackRxRequest(BaseModel):
     documents: str
@@ -83,6 +85,16 @@ class HackRxRequest(BaseModel):
 
 class HackRxResponse(BaseModel):
     answers: List[str]
+
+def sync_index_from_file(file_path: Path, vector_store: PineconeVectorStore):
+    """A synchronous function to perform the CPU-bound indexing task."""
+    print(f"Starting synchronous indexing for file: {file_path}")
+    documents = SimpleDirectoryReader(input_files=[file_path], errors='ignore').load_data()
+    storage_context = StorageContext.from_defaults(vector_store=vector_store)
+    VectorStoreIndex.from_documents(
+        documents, storage_context=storage_context, embed_model=embed_model,
+    )
+    print("Synchronous indexing complete.")
 
 @app.post("/hackrx/run", response_model=HackRxResponse, tags=["Submission Endpoint"])
 async def run_submission_endpoint(
@@ -96,49 +108,45 @@ async def run_submission_endpoint(
         is_indexed = stats.namespaces.get(url_hash, {}).get('vector_count', 0) > 0
 
         if not is_indexed:
-            print(f"Index not found in Pinecone. Creating new index for namespace: {url_hash}")
-            temp_doc_path = Path(f"./temp_docs/doc_{url_hash}.pdf")
+            print(f"Index not found. Starting ingestion for namespace: {url_hash}")
+            # THE FIX: Use the /tmp directory for temporary documents
+            temp_doc_path = Path(f"/tmp/{url_hash}/doc.pdf")
             temp_doc_path.parent.mkdir(parents=True, exist_ok=True)
+            
             try:
-                response = requests.get(request.documents)
-                response.raise_for_status()
-                with open(temp_doc_path, "wb") as f:
-                    f.write(response.content)
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(request.documents, follow_redirects=True, timeout=30.0)
+                    response.raise_for_status()
+                
+                async with aiofiles.open(temp_doc_path, "wb") as f:
+                    await f.write(response.content)
 
-                documents = SimpleDirectoryReader(input_files=[temp_doc_path], errors='ignore').load_data()
-                expected_vectors = len(documents)
-                print(f"Expecting to index {expected_vectors} vector(s).")
-                storage_context = StorageContext.from_defaults(vector_store=vector_store)
-                VectorStoreIndex.from_documents(
-                    documents, storage_context=storage_context, embed_model=embed_model,
-                )
-                print("Index upload initiated.")
-                max_wait_time = 60  # seconds
-
-                start_time = time.time()
-
-                while time.time() - start_time < max_wait_time:
+                await asyncio.to_thread(sync_index_from_file, temp_doc_path, vector_store)
+                
+                print("Polling Pinecone for index readiness...")
+                for _ in range(15):
                     stats = pinecone_index.describe_index_stats()
-                    current_vectors = stats.namespaces.get(url_hash, {}).get('vector_count', 0)
-                    print(f"Verifying index... Found {current_vectors}/{expected_vectors} vectors.")
-                    if current_vectors >= expected_vectors:
-                        print("Success: Index is consistent.")
+                    count = stats.namespaces.get(url_hash, {}).get('vector_count', 0)
+                    if count > 0:
+                        print(f"Index is ready with {count} vectors.")
                         break
-                    time.sleep(3) # Wait before polling again
-                else: # This else belongs to the while loop, it runs if the loop finishes without a 'break'
-                    raise HTTPException(status_code=504, detail="Timeout: Indexing did not complete in time.")
-            finally:
-                safe_delete(temp_doc_path)
+                    await asyncio.sleep(1)
+                else:
+                    print("Warning: Timed out waiting for index to become ready.")
 
+            finally:
+                if temp_doc_path.parent.exists():
+                    shutil.rmtree(temp_doc_path.parent)
+
+        print(f"Proceeding to query namespace: {url_hash}")
         index = VectorStoreIndex.from_vector_store(vector_store, embed_model=embed_model)
         
         cohere_rerank = CohereRerank(api_key=os.getenv("COHERE_API_KEY"), top_n=3)
-        qa_prompt_object = PromptTemplate(QA_PROMPT_TEMPLATE)
-
+        
         query_engine = index.as_query_engine(
             llm=llm,
-            similarity_top_k=15, 
-            node_postprocessors=[cohere_rerank], 
+            similarity_top_k=15,
+            node_postprocessors=[cohere_rerank],
             text_qa_template=qa_prompt_object,
         )
         
