@@ -106,12 +106,27 @@ async def run_submission_endpoint(
                     f.write(response.content)
 
                 documents = SimpleDirectoryReader(input_files=[temp_doc_path], errors='ignore').load_data()
+                expected_vectors = len(documents)
+                print(f"Expecting to index {expected_vectors} vector(s).")
                 storage_context = StorageContext.from_defaults(vector_store=vector_store)
                 VectorStoreIndex.from_documents(
                     documents, storage_context=storage_context, embed_model=embed_model,
                 )
-                print("Index upload complete. Waiting briefly for consistency...")
-                time.sleep(5)
+                print("Index upload initiated.")
+                max_wait_time = 60  # seconds
+
+                start_time = time.time()
+
+                while time.time() - start_time < max_wait_time:
+                    stats = pinecone_index.describe_index_stats()
+                    current_vectors = stats.namespaces.get(url_hash, {}).get('vector_count', 0)
+                    print(f"Verifying index... Found {current_vectors}/{expected_vectors} vectors.")
+                    if current_vectors >= expected_vectors:
+                        print("Success: Index is consistent.")
+                        break
+                    time.sleep(3) # Wait before polling again
+                else: # This else belongs to the while loop, it runs if the loop finishes without a 'break'
+                    raise HTTPException(status_code=504, detail="Timeout: Indexing did not complete in time.")
             finally:
                 safe_delete(temp_doc_path)
 
